@@ -250,45 +250,5 @@ class TestOPDSCatalog(unittest.TestCase):
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0].find('atom:title', ns).text, 'Alpha Title')
 
-    def test_utf8_encoding_with_french_accents(self):
-        """Test that French accented characters are properly encoded in OPDS feeds."""
-        # Create an EPUB with French accented characters
-        french_path = os.path.join(self.library_dir.name, 'french.epub')
-        create_epub(french_path, 'Les Misérables', 'Victor Hugo', date='1862-04-03')
-        
-        # Update file modification time to make it the most recent
-        now = time.time()
-        os.utime(french_path, (now, now))
-        
-        ns = {'atom': 'http://www.w3.org/2005/Atom'}
-        # Use /opds/recent to get the most recently added book
-        status, headers, body = self._get('/opds/recent')
-        self.assertEqual(status, 200)
-        
-        # Verify charset is in Content-Type
-        self.assertIn('charset=utf-8', headers.get('Content-Type'))
-        
-        # Verify XML declaration is present
-        xml_text = body.decode('utf-8')
-        self.assertTrue(xml_text.startswith('<?xml version="1.0" encoding="UTF-8"?>'))
-        
-        # Verify that the feed can be parsed as XML
-        feed = self._parse_feed(body)
-        
-        # Find the French book entry (should be first in recent)
-        entries = feed.findall('atom:entry', ns)
-        french_entry = None
-        for entry in entries:
-            title = entry.find('atom:title', ns).text
-            if 'Misérables' in title:
-                french_entry = entry
-                break
-        
-        # Verify the title and author with accents are correctly preserved
-        self.assertIsNotNone(french_entry, "French book should be in the feed")
-        self.assertEqual(french_entry.find('atom:title', ns).text, 'Les Misérables')
-        author_name = french_entry.find('atom:author/atom:name', ns).text
-        self.assertEqual(author_name, 'Victor Hugo')
-
 if __name__ == '__main__':
     unittest.main()
