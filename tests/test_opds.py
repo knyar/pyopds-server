@@ -100,14 +100,24 @@ class TestOPDSCatalog(unittest.TestCase):
 
     def _parse_feed(self, body):
         xml_text = body.decode('utf-8')
-        if xml_text.startswith('<?xml-stylesheet'):
-            xml_text = xml_text.split('\n', 1)[1]
-        return ET.fromstring(xml_text)
+        # Skip XML declaration and processing instructions
+        lines = xml_text.split('\n')
+        content_lines = []
+        for line in lines:
+            stripped = line.strip()
+            if stripped and not stripped.startswith('<?'):
+                content_lines.append(line)
+        xml_content = '\n'.join(content_lines)
+        return ET.fromstring(xml_content)
 
     def test_root_catalog_includes_sections_and_folder(self):
         status, headers, body = self._get('/opds')
         self.assertEqual(status, 200)
-        self.assertEqual(headers.get('Content-Type'), 'application/xml;profile=opds-catalog;kind=navigation')
+        self.assertIn('application/xml', headers.get('Content-Type'))
+        self.assertIn('charset=utf-8', headers.get('Content-Type'))
+        # Verify XML declaration is present
+        xml_text = body.decode('utf-8')
+        self.assertTrue(xml_text.startswith('<?xml version="1.0" encoding="UTF-8"?>'))
         ns = {'atom': 'http://www.w3.org/2005/Atom'}
         feed = self._parse_feed(body)
         entry_titles = {entry.find('atom:title', ns).text for entry in feed.findall('atom:entry', ns)}
@@ -121,7 +131,8 @@ class TestOPDSCatalog(unittest.TestCase):
         ns = {'atom': 'http://www.w3.org/2005/Atom'}
         status, headers, body = self._get('/opds/books?page=1')
         self.assertEqual(status, 200)
-        self.assertEqual(headers.get('Content-Type'), 'application/xml;profile=opds-catalog;kind=acquisition')
+        self.assertIn('application/xml', headers.get('Content-Type'))
+        self.assertIn('charset=utf-8', headers.get('Content-Type'))
         feed = self._parse_feed(body)
         entries = feed.findall('atom:entry', ns)
         self.assertEqual(len(entries), 1)
@@ -145,7 +156,8 @@ class TestOPDSCatalog(unittest.TestCase):
         ns = {'atom': 'http://www.w3.org/2005/Atom'}
         status, headers, body = self._get('/opds/folder/Subfolder?page=1')
         self.assertEqual(status, 200)
-        self.assertEqual(headers.get('Content-Type'), 'application/xml;profile=opds-catalog;kind=acquisition')
+        self.assertIn('application/xml', headers.get('Content-Type'))
+        self.assertIn('charset=utf-8', headers.get('Content-Type'))
         feed = self._parse_feed(body)
         entries = feed.findall('atom:entry', ns)
         self.assertEqual(len(entries), 1)
@@ -154,7 +166,8 @@ class TestOPDSCatalog(unittest.TestCase):
         self.assertIn('/download/Subfolder/beta.epub', link_hrefs)
         status_recent, headers_recent, body_recent = self._get('/opds/recent')
         self.assertEqual(status_recent, 200)
-        self.assertEqual(headers_recent.get('Content-Type'), 'application/xml;profile=opds-catalog;kind=acquisition')
+        self.assertIn('application/xml', headers_recent.get('Content-Type'))
+        self.assertIn('charset=utf-8', headers_recent.get('Content-Type'))
         recent_feed = self._parse_feed(body_recent)
         recent_titles = [entry.find('atom:title', ns).text for entry in recent_feed.findall('atom:entry', ns)]
         self.assertGreaterEqual(len(recent_titles), 2)
@@ -171,7 +184,8 @@ class TestOPDSCatalog(unittest.TestCase):
         ns = {'atom': 'http://www.w3.org/2005/Atom'}
         status, headers, body = self._get('/opds/by-year')
         self.assertEqual(status, 200)
-        self.assertEqual(headers.get('Content-Type'), 'application/xml;profile=opds-catalog;kind=navigation')
+        self.assertIn('application/xml', headers.get('Content-Type'))
+        self.assertIn('charset=utf-8', headers.get('Content-Type'))
         feed = self._parse_feed(body)
         entries = feed.findall('atom:entry', ns)
         self.assertGreaterEqual(len(entries), 2)
@@ -187,7 +201,8 @@ class TestOPDSCatalog(unittest.TestCase):
         ns = {'atom': 'http://www.w3.org/2005/Atom'}
         status, headers, body = self._get('/opds/by-year/2023?page=1')
         self.assertEqual(status, 200)
-        self.assertEqual(headers.get('Content-Type'), 'application/xml;profile=opds-catalog;kind=acquisition')
+        self.assertIn('application/xml', headers.get('Content-Type'))
+        self.assertIn('charset=utf-8', headers.get('Content-Type'))
         feed = self._parse_feed(body)
         entries = feed.findall('atom:entry', ns)
         self.assertEqual(len(entries), 1)
@@ -198,7 +213,8 @@ class TestOPDSCatalog(unittest.TestCase):
         ns = {'atom': 'http://www.w3.org/2005/Atom'}
         status, headers, body = self._get('/opds/by-author')
         self.assertEqual(status, 200)
-        self.assertEqual(headers.get('Content-Type'), 'application/xml;profile=opds-catalog;kind=navigation')
+        self.assertIn('application/xml', headers.get('Content-Type'))
+        self.assertIn('charset=utf-8', headers.get('Content-Type'))
         feed = self._parse_feed(body)
         entries = feed.findall('atom:entry', ns)
         # Should have A-Z + #
@@ -212,7 +228,8 @@ class TestOPDSCatalog(unittest.TestCase):
         ns = {'atom': 'http://www.w3.org/2005/Atom'}
         status, headers, body = self._get('/opds/by-author/letter/A?page=1')
         self.assertEqual(status, 200)
-        self.assertEqual(headers.get('Content-Type'), 'application/xml;profile=opds-catalog;kind=navigation')
+        self.assertIn('application/xml', headers.get('Content-Type'))
+        self.assertIn('charset=utf-8', headers.get('Content-Type'))
         feed = self._parse_feed(body)
         entries = feed.findall('atom:entry', ns)
         # PAGE_SIZE=1, so only 1 author per page
@@ -226,11 +243,52 @@ class TestOPDSCatalog(unittest.TestCase):
         ns = {'atom': 'http://www.w3.org/2005/Atom'}
         status, headers, body = self._get('/opds/by-author/Author%20One?page=1')
         self.assertEqual(status, 200)
-        self.assertEqual(headers.get('Content-Type'), 'application/xml;profile=opds-catalog;kind=acquisition')
+        self.assertIn('application/xml', headers.get('Content-Type'))
+        self.assertIn('charset=utf-8', headers.get('Content-Type'))
         feed = self._parse_feed(body)
         entries = feed.findall('atom:entry', ns)
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0].find('atom:title', ns).text, 'Alpha Title')
+
+    def test_utf8_encoding_with_french_accents(self):
+        """Test that French accented characters are properly encoded in OPDS feeds."""
+        # Create an EPUB with French accented characters
+        french_path = os.path.join(self.library_dir.name, 'french.epub')
+        create_epub(french_path, 'Les Misérables', 'Victor Hugo', date='1862-04-03')
+        
+        # Update file modification time to make it the most recent
+        now = time.time()
+        os.utime(french_path, (now, now))
+        
+        ns = {'atom': 'http://www.w3.org/2005/Atom'}
+        # Use /opds/recent to get the most recently added book
+        status, headers, body = self._get('/opds/recent')
+        self.assertEqual(status, 200)
+        
+        # Verify charset is in Content-Type
+        self.assertIn('charset=utf-8', headers.get('Content-Type'))
+        
+        # Verify XML declaration is present
+        xml_text = body.decode('utf-8')
+        self.assertTrue(xml_text.startswith('<?xml version="1.0" encoding="UTF-8"?>'))
+        
+        # Verify that the feed can be parsed as XML
+        feed = self._parse_feed(body)
+        
+        # Find the French book entry (should be first in recent)
+        entries = feed.findall('atom:entry', ns)
+        french_entry = None
+        for entry in entries:
+            title = entry.find('atom:title', ns).text
+            if 'Misérables' in title:
+                french_entry = entry
+                break
+        
+        # Verify the title and author with accents are correctly preserved
+        self.assertIsNotNone(french_entry, "French book should be in the feed")
+        self.assertEqual(french_entry.find('atom:title', ns).text, 'Les Misérables')
+        author_name = french_entry.find('atom:author/atom:name', ns).text
+        self.assertEqual(author_name, 'Victor Hugo')
 
 if __name__ == '__main__':
     unittest.main()

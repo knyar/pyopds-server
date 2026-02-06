@@ -189,10 +189,11 @@ class OPDSFeedGenerator:
                 ET.SubElement(entry, 'link', {'rel': rel, 'href': href, 'type': type_})
 
         xml_string = ET.tostring(feed, encoding='unicode', method='xml')
+        xml_declaration = '<?xml version="1.0" encoding="UTF-8"?>\n'
         processing_instruction = (
             '<?xml-stylesheet type="text/xsl" href="/opds_to_html.xslt"?>\n'
         )
-        return processing_instruction + xml_string
+        return xml_declaration + processing_instruction + xml_string
 
 
 class BookScanner:
@@ -1462,7 +1463,7 @@ class OPDSController:
         
         body = opensearch_xml.encode('utf-8')
         self.request.send_response(200)
-        self.request.send_header('Content-Type', 'application/opensearchdescription+xml')
+        self.request.send_header('Content-Type', 'application/opensearchdescription+xml; charset=utf-8')
         self.request.send_header('Content-Length', str(len(body)))
         self.request.end_headers()
         self.request.wfile.write(body)
@@ -1567,7 +1568,7 @@ class OPDSController:
                 return
 
             self.request.send_response(200)
-            self.request.send_header('Content-Type', 'application/xml')
+            self.request.send_header('Content-Type', 'application/xml; charset=utf-8')
             self.request.end_headers()
             with open(xslt_path, 'rb') as f:
                 self.request.wfile.write(f.read())
@@ -1579,7 +1580,7 @@ class OPDSController:
         self.request.send_response(200)
         self.request.send_header(
             'Content-Type',
-            f'application/xml;profile=opds-catalog;kind={catalog_kind}',
+            f'application/xml; charset=utf-8;profile=opds-catalog;kind={catalog_kind}',
         )
         self.request.send_header('Content-Length', str(len(body)))
         self.request.end_headers()
@@ -1587,7 +1588,7 @@ class OPDSController:
 
     def _send_error(self, code, message):
         self.request.send_response(code)
-        self.request.send_header('Content-Type', 'application/xml')
+        self.request.send_header('Content-Type', 'application/xml; charset=utf-8')
         self.request.end_headers()
         safe_message = xml_escape(str(message))
         error_xml = (
