@@ -1577,13 +1577,27 @@ class OPDSController:
         except Exception as exc:
             self._send_error(500, f"Error serving XSLT file: {exc}")
 
+    def _is_browser_request(self) -> bool:
+        """Detect if the request comes from a web browser.
+
+        Browsers send 'text/html' in their Accept header. OPDS clients
+        (KoReader, CrossPoint, Calibre) do not.
+        """
+        accept = self.request.headers.get('Accept', '')
+        return 'text/html' in accept
+
     def _send_xml_response(self, xml, catalog_kind):
         body = xml.encode('utf-8')
         self.request.send_response(200)
-        self.request.send_header(
-            'Content-Type',
-            f'application/atom+xml;profile=opds-catalog;kind={catalog_kind};charset=utf-8',
-        )
+
+        # Content negotiation: browsers need application/xml for XSLT
+        # rendering, OPDS clients get the spec-compliant atom+xml type.
+        if self._is_browser_request():
+            content_type = 'application/xml; charset=utf-8'
+        else:
+            content_type = f'application/atom+xml;profile=opds-catalog;kind={catalog_kind};charset=utf-8'
+
+        self.request.send_header('Content-Type', content_type)
         self.request.send_header('Content-Length', str(len(body)))
         self.request.end_headers()
         self.request.wfile.write(body)

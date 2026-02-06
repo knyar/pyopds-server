@@ -92,15 +92,15 @@ class TestOPDSCatalog(unittest.TestCase):
         importlib.reload(importlib.import_module('controllers.opds'))
         importlib.reload(importlib.import_module('server'))
 
-    def _get(self, path):
+    def _get(self, path, headers=None):
         conn = http.client.HTTPConnection('localhost', self.port, timeout=5)
-        conn.request('GET', path)
+        conn.request('GET', path, headers=headers or {})
         response = conn.getresponse()
         body = response.read()
-        headers = dict(response.getheaders())
+        resp_headers = dict(response.getheaders())
         status = response.status
         conn.close()
-        return status, headers, body
+        return status, resp_headers, body
 
     def _parse_feed(self, body):
         xml_text = body.decode('utf-8')
@@ -256,6 +256,24 @@ class TestOPDSCatalog(unittest.TestCase):
         entries = feed.findall('atom:entry', ns)
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0].find('atom:title', ns).text, 'Alpha Title')
+
+    def test_content_negotiation_browser_vs_opds_client(self):
+        """Test that browsers get application/xml (for XSLT) and OPDS clients get application/atom+xml."""
+        # OPDS client request (no Accept: text/html)
+        status, headers, body = self._get('/opds')
+        self.assertIn('application/atom+xml', headers.get('Content-Type', ''))
+
+        # Browser request (Accept: text/html)
+        browser_headers = {'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'}
+        status_b, headers_b, body_b = self._get('/opds', headers=browser_headers)
+        self.assertEqual(status_b, 200)
+        content_type_b = headers_b.get('Content-Type', '')
+        self.assertIn('application/xml', content_type_b)
+        self.assertNotIn('atom+xml', content_type_b)
+        self.assertIn('charset=utf-8', content_type_b)
+        # Both should return valid XML with the XSLT PI
+        xml_text = body_b.decode('utf-8')
+        self.assertTrue(xml_text.startswith('<?xml version="1.0" encoding="UTF-8"?>'))
 
     def test_utf8_encoding_with_french_accents(self):
         """Test that French accented characters are correctly encoded in OPDS feeds."""
