@@ -18,6 +18,16 @@ class UnifiedHandler(http.server.BaseHTTPRequestHandler):
     # Initialize router with all routes
     router = register_routes(Router())
 
+    def end_headers(self):
+        """Add Connection: close header to all responses for HTTP/1.0 compatibility.
+
+        Our server uses HTTP/1.0 but clients (e.g. ESP32 HTTPClient) may send
+        HTTP/1.1 requests. The explicit header ensures clients properly detect
+        the end of each response.
+        """
+        self.send_header('Connection', 'close')
+        super().end_headers()
+
     def __init__(self, *args, **kwargs):
         """Initialize handler with controller instances."""
         super().__init__(*args, **kwargs)

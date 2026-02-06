@@ -65,9 +65,13 @@ class TestOPDSCatalog(unittest.TestCase):
         os.makedirs(subfolder_path, exist_ok=True)
         cls.beta_path = os.path.join(subfolder_path, 'beta.epub')
         create_epub(cls.beta_path, 'Beta Title', 'Author Two', date='2024-06-20')
+        # French accented book for UTF-8 testing
+        cls.french_path = os.path.join(cls.library_dir.name, 'french.epub')
+        create_epub(cls.french_path, 'Les Misérables — Édition complète', 'Victor Hugo', date='2022-03-10')
         now = time.time()
         os.utime(cls.alpha_path, (now - 200, now - 200))
         os.utime(cls.beta_path, (now - 50, now - 50))
+        os.utime(cls.french_path, (now - 100, now - 100))
         cls.httpd = ThreadedTCPServer(('localhost', 0), cls.server.UnifiedHandler)
         cls.port = cls.httpd.server_address[1]
         cls.thread = threading.Thread(target=cls.httpd.serve_forever, daemon=True)
@@ -113,8 +117,11 @@ class TestOPDSCatalog(unittest.TestCase):
     def test_root_catalog_includes_sections_and_folder(self):
         status, headers, body = self._get('/opds')
         self.assertEqual(status, 200)
-        self.assertIn('application/xml', headers.get('Content-Type'))
-        self.assertIn('charset=utf-8', headers.get('Content-Type'))
+        content_type = headers.get('Content-Type', '')
+        self.assertIn('application/atom+xml', content_type)
+        self.assertIn('charset=utf-8', content_type)
+        # Connection: close must be present for HTTP client compatibility
+        self.assertEqual(headers.get('Connection'), 'close')
         # Verify XML declaration is present
         xml_text = body.decode('utf-8')
         self.assertTrue(xml_text.startswith('<?xml version="1.0" encoding="UTF-8"?>'))
@@ -131,7 +138,7 @@ class TestOPDSCatalog(unittest.TestCase):
         ns = {'atom': 'http://www.w3.org/2005/Atom'}
         status, headers, body = self._get('/opds/books?page=1')
         self.assertEqual(status, 200)
-        self.assertIn('application/xml', headers.get('Content-Type'))
+        self.assertIn('application/atom+xml', headers.get('Content-Type'))
         self.assertIn('charset=utf-8', headers.get('Content-Type'))
         feed = self._parse_feed(body)
         entries = feed.findall('atom:entry', ns)
@@ -156,7 +163,7 @@ class TestOPDSCatalog(unittest.TestCase):
         ns = {'atom': 'http://www.w3.org/2005/Atom'}
         status, headers, body = self._get('/opds/folder/Subfolder?page=1')
         self.assertEqual(status, 200)
-        self.assertIn('application/xml', headers.get('Content-Type'))
+        self.assertIn('application/atom+xml', headers.get('Content-Type'))
         self.assertIn('charset=utf-8', headers.get('Content-Type'))
         feed = self._parse_feed(body)
         entries = feed.findall('atom:entry', ns)
@@ -166,7 +173,7 @@ class TestOPDSCatalog(unittest.TestCase):
         self.assertIn('/download/Subfolder/beta.epub', link_hrefs)
         status_recent, headers_recent, body_recent = self._get('/opds/recent')
         self.assertEqual(status_recent, 200)
-        self.assertIn('application/xml', headers_recent.get('Content-Type'))
+        self.assertIn('application/atom+xml', headers_recent.get('Content-Type'))
         self.assertIn('charset=utf-8', headers_recent.get('Content-Type'))
         recent_feed = self._parse_feed(body_recent)
         recent_titles = [entry.find('atom:title', ns).text for entry in recent_feed.findall('atom:entry', ns)]
@@ -184,7 +191,7 @@ class TestOPDSCatalog(unittest.TestCase):
         ns = {'atom': 'http://www.w3.org/2005/Atom'}
         status, headers, body = self._get('/opds/by-year')
         self.assertEqual(status, 200)
-        self.assertIn('application/xml', headers.get('Content-Type'))
+        self.assertIn('application/atom+xml', headers.get('Content-Type'))
         self.assertIn('charset=utf-8', headers.get('Content-Type'))
         feed = self._parse_feed(body)
         entries = feed.findall('atom:entry', ns)
@@ -201,7 +208,7 @@ class TestOPDSCatalog(unittest.TestCase):
         ns = {'atom': 'http://www.w3.org/2005/Atom'}
         status, headers, body = self._get('/opds/by-year/2023?page=1')
         self.assertEqual(status, 200)
-        self.assertIn('application/xml', headers.get('Content-Type'))
+        self.assertIn('application/atom+xml', headers.get('Content-Type'))
         self.assertIn('charset=utf-8', headers.get('Content-Type'))
         feed = self._parse_feed(body)
         entries = feed.findall('atom:entry', ns)
@@ -213,7 +220,7 @@ class TestOPDSCatalog(unittest.TestCase):
         ns = {'atom': 'http://www.w3.org/2005/Atom'}
         status, headers, body = self._get('/opds/by-author')
         self.assertEqual(status, 200)
-        self.assertIn('application/xml', headers.get('Content-Type'))
+        self.assertIn('application/atom+xml', headers.get('Content-Type'))
         self.assertIn('charset=utf-8', headers.get('Content-Type'))
         feed = self._parse_feed(body)
         entries = feed.findall('atom:entry', ns)
@@ -228,7 +235,7 @@ class TestOPDSCatalog(unittest.TestCase):
         ns = {'atom': 'http://www.w3.org/2005/Atom'}
         status, headers, body = self._get('/opds/by-author/letter/A?page=1')
         self.assertEqual(status, 200)
-        self.assertIn('application/xml', headers.get('Content-Type'))
+        self.assertIn('application/atom+xml', headers.get('Content-Type'))
         self.assertIn('charset=utf-8', headers.get('Content-Type'))
         feed = self._parse_feed(body)
         entries = feed.findall('atom:entry', ns)
@@ -243,12 +250,69 @@ class TestOPDSCatalog(unittest.TestCase):
         ns = {'atom': 'http://www.w3.org/2005/Atom'}
         status, headers, body = self._get('/opds/by-author/Author%20One?page=1')
         self.assertEqual(status, 200)
-        self.assertIn('application/xml', headers.get('Content-Type'))
+        self.assertIn('application/atom+xml', headers.get('Content-Type'))
         self.assertIn('charset=utf-8', headers.get('Content-Type'))
         feed = self._parse_feed(body)
         entries = feed.findall('atom:entry', ns)
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0].find('atom:title', ns).text, 'Alpha Title')
+
+    def test_utf8_encoding_with_french_accents(self):
+        """Test that French accented characters are correctly encoded in OPDS feeds."""
+        import xml.parsers.expat as expat_mod
+        ns = {'atom': 'http://www.w3.org/2005/Atom'}
+
+        # Fetch all books (paginate to find the French book)
+        all_titles = []
+        for page in range(1, 10):
+            status, headers, body = self._get(f'/opds/books?page={page}')
+            if status != 200:
+                break
+            feed = self._parse_feed(body)
+            entries = feed.findall('atom:entry', ns)
+            if not entries:
+                break
+            for entry in entries:
+                all_titles.append(entry.find('atom:title', ns).text)
+
+        french_title = 'Les Misérables — Édition complète'
+        self.assertIn(french_title, all_titles, "French book with accents should be in the catalog")
+
+        # Verify the raw XML is valid UTF-8 with correct declaration
+        status, headers, body = self._get('/opds/books?page=1')
+        xml_text = body.decode('utf-8')
+        self.assertTrue(xml_text.startswith('<?xml version="1.0" encoding="UTF-8"?>'))
+
+        # Verify expat (same parser as CrossPoint) can parse the full response
+        parsed_titles = []
+        state = {'in_entry': False, 'in_title': False, 'text': ''}
+
+        def start_el(name, attrs):
+            if name == 'entry':
+                state['in_entry'] = True
+            elif state['in_entry'] and name == 'title':
+                state['in_title'] = True
+                state['text'] = ''
+
+        def end_el(name):
+            if name == 'title' and state['in_title']:
+                parsed_titles.append(state['text'])
+                state['in_title'] = False
+            elif name == 'entry':
+                state['in_entry'] = False
+
+        def char_data(data):
+            if state['in_title']:
+                state['text'] += data
+
+        p = expat_mod.ParserCreate()
+        p.StartElementHandler = start_el
+        p.EndElementHandler = end_el
+        p.CharacterDataHandler = char_data
+        # Parse the raw bytes exactly as CrossPoint would (expat with no namespace processing)
+        p.Parse(body, True)
+        self.assertTrue(len(parsed_titles) > 0, "Expat should parse at least one entry title")
+
 
 if __name__ == '__main__':
     unittest.main()

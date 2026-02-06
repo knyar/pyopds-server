@@ -170,7 +170,7 @@ class OPDSFeedGenerator:
         ET.SubElement(feed, 'title').text = title
         ET.SubElement(feed, 'id').text = feed_id
         ET.SubElement(feed, 'updated').text = (
-            datetime.datetime.now(datetime.timezone.utc).isoformat() + 'Z'
+            datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
         )
 
         for rel, href, type_ in links:
@@ -1569,9 +1569,11 @@ class OPDSController:
 
             self.request.send_response(200)
             self.request.send_header('Content-Type', 'application/xml; charset=utf-8')
-            self.request.end_headers()
             with open(xslt_path, 'rb') as f:
-                self.request.wfile.write(f.read())
+                data = f.read()
+            self.request.send_header('Content-Length', str(len(data)))
+            self.request.end_headers()
+            self.request.wfile.write(data)
         except Exception as exc:
             self._send_error(500, f"Error serving XSLT file: {exc}")
 
@@ -1580,7 +1582,7 @@ class OPDSController:
         self.request.send_response(200)
         self.request.send_header(
             'Content-Type',
-            f'application/xml; charset=utf-8;profile=opds-catalog;kind={catalog_kind}',
+            f'application/atom+xml;profile=opds-catalog;kind={catalog_kind};charset=utf-8',
         )
         self.request.send_header('Content-Length', str(len(body)))
         self.request.end_headers()
@@ -1589,13 +1591,15 @@ class OPDSController:
     def _send_error(self, code, message):
         self.request.send_response(code)
         self.request.send_header('Content-Type', 'application/xml; charset=utf-8')
-        self.request.end_headers()
         safe_message = xml_escape(str(message))
         error_xml = (
             '<?xml version="1.0" encoding="UTF-8"?><error><code>'
             f'{code}</code><message>{safe_message}</message></error>'
         )
-        self.request.wfile.write(error_xml.encode('utf-8'))
+        body = error_xml.encode('utf-8')
+        self.request.send_header('Content-Length', str(len(body)))
+        self.request.end_headers()
+        self.request.wfile.write(body)
 
 
 __all__ = [
