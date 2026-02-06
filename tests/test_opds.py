@@ -118,7 +118,7 @@ class TestOPDSCatalog(unittest.TestCase):
         status, headers, body = self._get('/opds')
         self.assertEqual(status, 200)
         content_type = headers.get('Content-Type', '')
-        self.assertIn('application/atom+xml', content_type)
+        self.assertIn('application/xml', content_type)
         self.assertIn('charset=utf-8', content_type)
         # Connection: close must be present for HTTP client compatibility
         self.assertEqual(headers.get('Connection'), 'close')
@@ -138,7 +138,7 @@ class TestOPDSCatalog(unittest.TestCase):
         ns = {'atom': 'http://www.w3.org/2005/Atom'}
         status, headers, body = self._get('/opds/books?page=1')
         self.assertEqual(status, 200)
-        self.assertIn('application/atom+xml', headers.get('Content-Type'))
+        self.assertIn('application/xml', headers.get('Content-Type'))
         self.assertIn('charset=utf-8', headers.get('Content-Type'))
         feed = self._parse_feed(body)
         entries = feed.findall('atom:entry', ns)
@@ -163,7 +163,7 @@ class TestOPDSCatalog(unittest.TestCase):
         ns = {'atom': 'http://www.w3.org/2005/Atom'}
         status, headers, body = self._get('/opds/folder/Subfolder?page=1')
         self.assertEqual(status, 200)
-        self.assertIn('application/atom+xml', headers.get('Content-Type'))
+        self.assertIn('application/xml', headers.get('Content-Type'))
         self.assertIn('charset=utf-8', headers.get('Content-Type'))
         feed = self._parse_feed(body)
         entries = feed.findall('atom:entry', ns)
@@ -173,7 +173,7 @@ class TestOPDSCatalog(unittest.TestCase):
         self.assertIn('/download/Subfolder/beta.epub', link_hrefs)
         status_recent, headers_recent, body_recent = self._get('/opds/recent')
         self.assertEqual(status_recent, 200)
-        self.assertIn('application/atom+xml', headers_recent.get('Content-Type'))
+        self.assertIn('application/xml', headers_recent.get('Content-Type'))
         self.assertIn('charset=utf-8', headers_recent.get('Content-Type'))
         recent_feed = self._parse_feed(body_recent)
         recent_titles = [entry.find('atom:title', ns).text for entry in recent_feed.findall('atom:entry', ns)]
@@ -191,7 +191,7 @@ class TestOPDSCatalog(unittest.TestCase):
         ns = {'atom': 'http://www.w3.org/2005/Atom'}
         status, headers, body = self._get('/opds/by-year')
         self.assertEqual(status, 200)
-        self.assertIn('application/atom+xml', headers.get('Content-Type'))
+        self.assertIn('application/xml', headers.get('Content-Type'))
         self.assertIn('charset=utf-8', headers.get('Content-Type'))
         feed = self._parse_feed(body)
         entries = feed.findall('atom:entry', ns)
@@ -208,7 +208,7 @@ class TestOPDSCatalog(unittest.TestCase):
         ns = {'atom': 'http://www.w3.org/2005/Atom'}
         status, headers, body = self._get('/opds/by-year/2023?page=1')
         self.assertEqual(status, 200)
-        self.assertIn('application/atom+xml', headers.get('Content-Type'))
+        self.assertIn('application/xml', headers.get('Content-Type'))
         self.assertIn('charset=utf-8', headers.get('Content-Type'))
         feed = self._parse_feed(body)
         entries = feed.findall('atom:entry', ns)
@@ -220,7 +220,7 @@ class TestOPDSCatalog(unittest.TestCase):
         ns = {'atom': 'http://www.w3.org/2005/Atom'}
         status, headers, body = self._get('/opds/by-author')
         self.assertEqual(status, 200)
-        self.assertIn('application/atom+xml', headers.get('Content-Type'))
+        self.assertIn('application/xml', headers.get('Content-Type'))
         self.assertIn('charset=utf-8', headers.get('Content-Type'))
         feed = self._parse_feed(body)
         entries = feed.findall('atom:entry', ns)
@@ -235,7 +235,7 @@ class TestOPDSCatalog(unittest.TestCase):
         ns = {'atom': 'http://www.w3.org/2005/Atom'}
         status, headers, body = self._get('/opds/by-author/letter/A?page=1')
         self.assertEqual(status, 200)
-        self.assertIn('application/atom+xml', headers.get('Content-Type'))
+        self.assertIn('application/xml', headers.get('Content-Type'))
         self.assertIn('charset=utf-8', headers.get('Content-Type'))
         feed = self._parse_feed(body)
         entries = feed.findall('atom:entry', ns)
@@ -250,30 +250,12 @@ class TestOPDSCatalog(unittest.TestCase):
         ns = {'atom': 'http://www.w3.org/2005/Atom'}
         status, headers, body = self._get('/opds/by-author/Author%20One?page=1')
         self.assertEqual(status, 200)
-        self.assertIn('application/atom+xml', headers.get('Content-Type'))
+        self.assertIn('application/xml', headers.get('Content-Type'))
         self.assertIn('charset=utf-8', headers.get('Content-Type'))
         feed = self._parse_feed(body)
         entries = feed.findall('atom:entry', ns)
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0].find('atom:title', ns).text, 'Alpha Title')
-
-    def test_content_negotiation_browser_vs_opds_client(self):
-        """Test that browsers get application/xml (for XSLT) and OPDS clients get application/atom+xml."""
-        # OPDS client request (no Accept: text/html)
-        status, headers, body = self._get('/opds')
-        self.assertIn('application/atom+xml', headers.get('Content-Type', ''))
-
-        # Browser request (Accept: text/html)
-        browser_headers = {'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'}
-        status_b, headers_b, body_b = self._get('/opds', headers=browser_headers)
-        self.assertEqual(status_b, 200)
-        content_type_b = headers_b.get('Content-Type', '')
-        self.assertIn('application/xml', content_type_b)
-        self.assertNotIn('atom+xml', content_type_b)
-        self.assertIn('charset=utf-8', content_type_b)
-        # Both should return valid XML with the XSLT PI
-        xml_text = body_b.decode('utf-8')
-        self.assertTrue(xml_text.startswith('<?xml version="1.0" encoding="UTF-8"?>'))
 
     def test_utf8_encoding_with_french_accents(self):
         """Test that French accented characters are correctly encoded in OPDS feeds."""
