@@ -1,4 +1,5 @@
 """KoReader sync storage and HTTP controller."""
+import hashlib
 import json
 import os
 import sqlite3
@@ -6,6 +7,163 @@ import base64
 import time
 
 KOREADER_SYNC_DB_PATH = os.environ.get('KOREADER_SYNC_DB_PATH', 'koreader_sync.db')
+KOREADER_SYNC_LIBRARY_DIR = os.environ.get('LIBRARY_DIR', 'books')
+
+
+def _is_truthy_env(value: str | None) -> bool:
+    return (value or '').strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+KOREADER_SYNC_NORMALIZE = _is_truthy_env(os.environ.get('KOREADER_SYNC_NORMALIZE'))
+
+# Byte offsets used by the partial-content md5. Matches the scheme used by some
+# KoReader builds and other readers that hash sparse slices of the file rather
+# than the whole content.
+PARTIAL_HASH_OFFSETS = (
+    0,
+    1024,
+    4096,
+    16384,
+    65536,
+    262144,
+    1048576,
+    4194304,
+    16777216,
+    67108864,
+    268435456,
+    1073741824,
+)
+PARTIAL_HASH_CHUNK = 1024
+
+
+class BookHashIndex:
+    """Lazy SQLite-backed index of EPUB filename and partial-content md5 hashes.
+
+    Used by the sync API in normalize mode to map any of the hashes a client
+    may report (filename md5 or partial-content md5) to a single canonical
+    document id, so different readers sync to the same record.
+    """
+
+    def __init__(self, db_path: str = KOREADER_SYNC_DB_PATH, library_dir: str = KOREADER_SYNC_LIBRARY_DIR):
+        self.db_path = db_path
+        self.library_dir = library_dir
+        self._ensure_table()
+
+    def _get_connection(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _ensure_table(self):
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS epub_hashes (
+                    relative_path TEXT PRIMARY KEY,
+                    filename_md5 TEXT NOT NULL,
+                    content_md5 TEXT NOT NULL,
+                    mtime REAL NOT NULL,
+                    size INTEGER NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                'CREATE INDEX IF NOT EXISTS idx_epub_hashes_filename ON epub_hashes(filename_md5)'
+            )
+            conn.execute(
+                'CREATE INDEX IF NOT EXISTS idx_epub_hashes_content ON epub_hashes(content_md5)'
+            )
+
+    @staticmethod
+    def compute_filename_md5(path: str) -> str:
+        return hashlib.md5(os.path.basename(path).encode('utf-8')).hexdigest()
+
+    @staticmethod
+    def compute_content_md5(path: str) -> str:
+        h = hashlib.md5()
+        size = os.path.getsize(path)
+        with open(path, 'rb') as f:
+            for offset in PARTIAL_HASH_OFFSETS:
+                if offset >= size:
+                    break
+                f.seek(offset)
+                h.update(f.read(min(PARTIAL_HASH_CHUNK, size - offset)))
+        return h.hexdigest()
+
+    def _ensure_hashes(self, path: str) -> tuple[str | None, str | None]:
+        """Return (filename_md5, content_md5) for path, refreshing the cache if stale."""
+        try:
+            stat = os.stat(path)
+        except OSError:
+            return None, None
+        relative_path = os.path.relpath(path, self.library_dir)
+        mtime = stat.st_mtime
+        size = stat.st_size
+
+        with self._get_connection() as conn:
+            row = conn.execute(
+                'SELECT filename_md5, content_md5, mtime, size FROM epub_hashes WHERE relative_path = ?',
+                (relative_path,),
+            ).fetchone()
+        if row and row['mtime'] == mtime and row['size'] == size:
+            return row['filename_md5'], row['content_md5']
+
+        try:
+            filename_md5 = self.compute_filename_md5(path)
+            content_md5 = self.compute_content_md5(path)
+        except OSError:
+            return None, None
+
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO epub_hashes
+                    (relative_path, filename_md5, content_md5, mtime, size)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (relative_path, filename_md5, content_md5, mtime, size),
+            )
+        return filename_md5, content_md5
+
+    def find_canonical_id(self, hash_value: str) -> str | None:
+        """Resolve a client-supplied hash to the canonical document id.
+
+        The canonical id is the partial-content md5 of the matched epub. This
+        means clients that hash by filename and clients that hash by content
+        end up writing to the same sync record.
+
+        Returns None if no epub in the library matches the given hash.
+        """
+        if not hash_value:
+            return None
+
+        with self._get_connection() as conn:
+            cached_rows = conn.execute(
+                """
+                SELECT relative_path FROM epub_hashes
+                WHERE filename_md5 = ? OR content_md5 = ?
+                """,
+                (hash_value, hash_value),
+            ).fetchall()
+
+        for row in cached_rows:
+            full_path = os.path.join(self.library_dir, row['relative_path'])
+            filename_md5, content_md5 = self._ensure_hashes(full_path)
+            if filename_md5 == hash_value or content_md5 == hash_value:
+                return content_md5
+
+        if not os.path.isdir(self.library_dir):
+            return None
+
+        for root, _, files in os.walk(self.library_dir):
+            for filename in files:
+                if not filename.endswith('.epub'):
+                    continue
+                path = os.path.join(root, filename)
+                filename_md5, content_md5 = self._ensure_hashes(path)
+                if filename_md5 == hash_value or content_md5 == hash_value:
+                    return content_md5
+        return None
 
 class KoReaderSyncStorage:
     def _ensure_user_table(self):
@@ -98,14 +256,42 @@ class KoReaderSyncController:
     ERROR_USER_EXISTS = 2002
     ERROR_INVALID_FIELDS = 2003
     ERROR_DOCUMENT_FIELD_MISSING = 2004
+    ERROR_DOCUMENT_NOT_FOUND = 2005
 
     _sync_storage_instance = None
+    _book_hash_index_instance = None
 
     def __init__(self, request_handler):
         if KoReaderSyncController._sync_storage_instance is None:
             KoReaderSyncController._sync_storage_instance = KoReaderSyncStorage()
+        if KOREADER_SYNC_NORMALIZE and KoReaderSyncController._book_hash_index_instance is None:
+            KoReaderSyncController._book_hash_index_instance = BookHashIndex(
+                KOREADER_SYNC_DB_PATH, KOREADER_SYNC_LIBRARY_DIR
+            )
         self.request = request_handler
         self.sync_storage = KoReaderSyncController._sync_storage_instance
+        self.book_hash_index = (
+            KoReaderSyncController._book_hash_index_instance
+            if KOREADER_SYNC_NORMALIZE
+            else None
+        )
+
+    def _resolve_document(self, document):
+        """In normalize mode, resolve a client hash to a canonical document id.
+
+        Returns the canonical id on success, or None if the request was rejected
+        (in which case an error response has already been sent).
+        """
+        if self.book_hash_index is None:
+            return document
+        canonical = self.book_hash_index.find_canonical_id(document)
+        if not canonical:
+            self._send_json_error(
+                self.ERROR_DOCUMENT_NOT_FOUND,
+                'No epub in the library matches the provided document hash',
+            )
+            return None
+        return canonical
 
     def _is_valid_field(self, field):
         """Check if field is a non-empty string."""
@@ -160,9 +346,13 @@ class KoReaderSyncController:
             self._send_json_error(self.ERROR_DOCUMENT_FIELD_MISSING, 'Invalid document parameter')
             return
 
+        canonical = self._resolve_document(document)
+        if canonical is None:
+            return
+
         records = self.sync_storage.fetch_records(
             user=user,
-            document=document,
+            document=canonical,
         )
 
         if not records:
@@ -182,7 +372,7 @@ class KoReaderSyncController:
         if row['timestamp'] is not None:
             res['timestamp'] = row['timestamp']
         if res:
-            res['document'] = document
+            res['document'] = document if self.book_hash_index is None else canonical
 
         self._send_json_response(res)
 
@@ -213,12 +403,16 @@ class KoReaderSyncController:
             self._send_json_error(self.ERROR_INVALID_FIELDS, 'Invalid percentage')
             return
 
+        canonical = self._resolve_document(document)
+        if canonical is None:
+            return
+
         timestamp = time.time()
 
-        self.sync_storage.upsert_record(user, document, percentage, progress, device, device_id, timestamp)
+        self.sync_storage.upsert_record(user, canonical, percentage, progress, device, device_id, timestamp)
 
         self._send_json_response({
-            'document': document,
+            'document': canonical,
             'timestamp': timestamp,
         })
 
@@ -275,6 +469,7 @@ class KoReaderSyncController:
             self.ERROR_USER_EXISTS: 409,
             self.ERROR_INVALID_FIELDS: 400,
             self.ERROR_DOCUMENT_FIELD_MISSING: 400,
+            self.ERROR_DOCUMENT_NOT_FOUND: 404,
         }
         http_status = http_status_map.get(code, 500)
         
@@ -301,6 +496,9 @@ class KoReaderSyncController:
 
 __all__ = [
     'KOREADER_SYNC_DB_PATH',
+    'KOREADER_SYNC_LIBRARY_DIR',
+    'KOREADER_SYNC_NORMALIZE',
+    'BookHashIndex',
     'KoReaderSyncController',
     'KoReaderSyncStorage',
 ]
